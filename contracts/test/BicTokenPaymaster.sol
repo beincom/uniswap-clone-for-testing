@@ -120,6 +120,11 @@ contract BicTokenPaymaster is BasePaymaster, ERC20Votes, Pausable {
         _isExcludedFromTax[_owner] = true;
     }
 
+    // Mock Mint function for testing
+    function mint(address to, uint256 amount) public {
+        _mint(to, amount);
+    }
+
     /**
      * @notice Set the oracle to use for token exchange rate.
      * @param _oracle the oracle to use.

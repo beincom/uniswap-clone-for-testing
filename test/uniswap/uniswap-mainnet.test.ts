@@ -3,7 +3,8 @@ import { ethers, network } from "hardhat";
 import {
   TestWeth9,
   TestERC20,
-  IUniswapV3Factory, IUniswapV3Pool
+  IUniswapV3Factory, IUniswapV3Pool,
+  BicTokenPaymaster
 } from "../../typechain-types";
 
 
@@ -25,7 +26,7 @@ import {
 } from "@uniswap/v3-sdk";
 import { CurrencyAmount, Percent, Token } from "@uniswap/sdk-core";
 import NonfungiblePositionManagerArtifact from "@uniswap/v3-periphery/artifacts/contracts/NonfungiblePositionManager.sol/NonfungiblePositionManager.json";
-import { Contract } from "ethers";
+import { Contract, Wallet } from "ethers";
 
 
 export const getMinTick = (tickSpacing: number) =>
@@ -55,7 +56,7 @@ describe("Uniswap Mainnet", function () {
   let nonfungiblePositionManager: Contract;
   let pool: IUniswapV3Pool;
 
-  let bicToken: TestERC20;
+  let bicToken: BicTokenPaymaster;
   let weth9: TestWeth9;
 
   let token0: TestWeth9;
@@ -187,8 +188,8 @@ describe("Uniswap Mainnet", function () {
 
   before(async () => {
     const [deployer] = await ethers.getSigners();
-    const BicToken = await ethers.getContractFactory("TestERC20");
-    bicToken = await BicToken.deploy();
+    const BicToken = await ethers.getContractFactory("BicTokenPaymaster");
+    bicToken = await BicToken.deploy(ethers.ZeroAddress, deployer.address);
 
     const WrapEth = await ethers.getContractFactory("TestWeth9");
     weth9 = await WrapEth.deploy();
@@ -203,7 +204,7 @@ describe("Uniswap Mainnet", function () {
       NONFUNGIBLE_POSITION_MANAGER_CONTRACT_ADDRESS,
     );
     // nonfungiblePositionManager = new Contract(NONFUNGIBLE_POSITION_MANAGER_CONTRACT_ADDRESS, NonfungiblePositionManagerArtifact.abi, deployer);
-    
+
 
     expect(
       await uniswapV3Factory.feeAmountTickSpacing(FeeAmount.MEDIUM)
@@ -294,21 +295,29 @@ describe("Uniswap Mainnet", function () {
 
   it("Should transfer with charging tax fee", async () => {
     const amount = ethers.parseEther("1000");
+    const random  = Wallet.createRandom();
+    const setPoolTx = await bicToken.setPool(random.address, true);
+    await setPoolTx.wait();
 
+    
     // TODO: Get tax fee from the Token
-    const taxFee = 1000n;
+    const taxFee = await bicToken.sellTax();
     const fee = (amount * taxFee) / MAX_BPS;
     const amountRemaining = amount - fee;
-    const [deployer, user1] = await ethers.getSigners();
-    const balancePrev = await bicToken.balanceOf(user1.address);
+
+    const [deployer] = await ethers.getSigners();
+    const balancePrev = await bicToken.balanceOf(random.address);
+    console.log("🚀 ~ it ~ balancePrev:", balancePrev)
 
     const transferTx = await bicToken
       .connect(deployer)
-      .transfer(user1.address, amount);
+      .transfer(random.address, amount);
     await transferTx.wait();
 
-    const balanceNext = await bicToken.balanceOf(user1.address);
+    const balanceNext = await bicToken.balanceOf(random.address);
+    console.log("🚀 ~ it ~ balanceNext:", balanceNext)
 
+    // TODO: please check
     expect(balanceNext).to.be.eq(balancePrev + amountRemaining);
   });
 
@@ -318,10 +327,10 @@ describe("Uniswap Mainnet", function () {
       .connect(user1)
       .approve(nonfungiblePositionManager.target, ethers.MaxUint256);
 
-   
+
   });
 
-  it("Should be ADD LIQUIDITY without charging tax fee", async () => {
+  it("Should be ADD LIQUIDITY with charging tax fee", async () => {
     const [deployer, user1] = await ethers.getSigners();
 
     const [token0, token1] = sortedTokens(
@@ -390,10 +399,55 @@ describe("Uniswap Mainnet", function () {
 
   it("Should be REMOVE LIQUIDITY without charging tax fee", async () => {
     const [deployer, user1] = await ethers.getSigners();
-  });
 
-  it("Should be COLLECT FEE LIQUIDITY without charging tax fee", async () => {
-    const [deployer, user1] = await ethers.getSigners();
+    const amount0 = ethers.parseEther("10");
+    const amount1 = ethers.parseEther("11");
+    const [token0, token1] = sortedTokens(
+      bicToken as { target: string },
+      weth9 as { target: string }
+    );
+
+    const collectOptions: Omit<CollectOptions, 'tokenId'> = {
+      expectedCurrencyOwed0: CurrencyAmount.fromRawAmount(
+        new Token(network.config.chainId || 0, token0.target, 18, "", ""),
+        0
+      ),
+      expectedCurrencyOwed1: CurrencyAmount.fromRawAmount(
+        new Token(network.config.chainId || 0, token1.target, 18, "", ""),
+        0
+      ),
+      recipient: user1.address,
+    }
+
+    const removeLiquidityOptions: RemoveLiquidityOptions = {
+      deadline: Math.floor(Date.now() / 1000) + 60 * 20,
+      slippageTolerance: new Percent(10_000, 10_000),
+      tokenId: currentPositionId.toString(),
+      // percentage of liquidity to remove
+      liquidityPercentage: new Percent(5,100),
+      collectOptions,
+    }
+
+    const currentPosition = await constructPosition(
+      amount0.toString(),
+      amount1.toString()
+    )
+
+    const { calldata, value } = NonfungiblePositionManagerSDK.removeCallParameters(
+      currentPosition,
+      removeLiquidityOptions
+    );
+
+    const transaction = {
+      data: calldata,
+      to: NONFUNGIBLE_POSITION_MANAGER_CONTRACT_ADDRESS,
+      value: value,
+      from: user1.address,
+    }
+
+    const removeTx = await user1.sendTransaction(transaction)
+    const receipt = await removeTx.wait();
+
   });
 
   it("Should be SELL with charging tax fee", async () => {
@@ -433,7 +487,7 @@ describe("Uniswap Mainnet", function () {
     const recept = await swapTx.wait();
 
     // TODO: Expect deduct tax fee
-
+    
   });
 
   it("Should be BUY with charging tax fee", async () => {
