@@ -435,4 +435,44 @@ describe("Uniswap Mainnet", function () {
     // TODO: Expect deduct tax fee
 
   });
+
+  it("Should be BUY with charging tax fee", async () => {
+    const [deployer, user1] = await ethers.getSigners();
+    const pool = await constructPool();
+    const options: SwapOptions = {
+      slippageTolerance: new Percent(50, 10_000), // 50 bips, or 0.50%
+      deadline: Math.floor(Date.now() / 1000) + 60 * 20, // 20 minutes from the current Unix time
+      recipient: user1.address,
+    }
+    const bicTokenSdk = new Token(network.config.chainId || 0, bicToken.target.toString(), 18, "", "")
+    const wethTokenSdk = new Token(network.config.chainId || 0, weth9.target.toString(), 18, "", "")
+
+    const swapRoute = new Route(
+      [pool],
+      wethTokenSdk,
+      bicTokenSdk,
+    );
+
+    await getTokenTransferApproval(user1, weth9.target.toString(), SWAP_ROUTER_ADDRESS, ethers.MaxUint256.toString());
+
+    const buyAmount = ethers.parseEther("1000");
+    const amountInCurrencyAmount = CurrencyAmount.fromRawAmount(
+      wethTokenSdk,
+      buyAmount.toString(),
+    );
+    const uncheckedTrade = await Trade.exactIn(swapRoute, amountInCurrencyAmount)
+    const methodParameters = SwapRouter.swapCallParameters([uncheckedTrade], options);
+    const tx = {
+      data: methodParameters.calldata,
+      to: SWAP_ROUTER_ADDRESS,
+      value: methodParameters.value,
+      from: user1.address,
+    }
+
+    const swapTx = await user1.sendTransaction(tx);
+    const recept = await swapTx.wait();
+
+    // TODO: Expect deduct tax fee
+
+  });
 });
