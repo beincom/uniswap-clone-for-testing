@@ -45,9 +45,9 @@ const DEFAULT_COMPILER_SETTINGS = {
 };
 
 const BIC_TOKEN_COMPILER_SETTING = {
-  version: "0.8.12",
+  version: "0.8.23",
   settings: {
-    evmVersion: "istanbul",
+    evmVersion: "london",
     optimizer: {
       enabled: true,
       runs: 1_000_000,
@@ -61,20 +61,11 @@ const BIC_TOKEN_COMPILER_SETTING = {
 const config: HardhatUserConfig = {
   solidity: {
     compilers: [
-      DEFAULT_COMPILER_SETTINGS
+      DEFAULT_COMPILER_SETTINGS,
+      BIC_TOKEN_COMPILER_SETTING
     ],
     overrides: {
-      "contracts/NonfungiblePositionManager.sol":
-        LOW_OPTIMIZER_COMPILER_SETTINGS,
-      "contracts/test/MockTimeNonfungiblePositionManager.sol":
-        LOW_OPTIMIZER_COMPILER_SETTINGS,
-      "contracts/test/NFTDescriptorTest.sol":
-        LOWEST_OPTIMIZER_COMPILER_SETTINGS,
-      "contracts/NonfungibleTokenPositionDescriptor.sol":
-        LOWEST_OPTIMIZER_COMPILER_SETTINGS,
-      "contracts/libraries/NFTDescriptor.sol":
-        LOWEST_OPTIMIZER_COMPILER_SETTINGS,
-      
+
       "contracts/test/BicTokenPaymaster.sol": BIC_TOKEN_COMPILER_SETTING,
       "@account-abstraction/contracts/core/BasePaymaster.sol": BIC_TOKEN_COMPILER_SETTING,
       "@account-abstraction/contracts/interfaces/UserOperation.sol": BIC_TOKEN_COMPILER_SETTING,
@@ -84,6 +75,10 @@ const config: HardhatUserConfig = {
       "@account-abstraction/contracts/interfaces/INonceManager.sol": BIC_TOKEN_COMPILER_SETTING,
       "@account-abstraction/contracts/samples/IOracle.sol": BIC_TOKEN_COMPILER_SETTING,
       "@account-abstraction/contracts/interfaces/IPaymaster.sol": BIC_TOKEN_COMPILER_SETTING,
+      "@account-abstraction/contracts/core/Helpers.sol": BIC_TOKEN_COMPILER_SETTING,
+      "@openzeppelin/contracts/utils/Pausable.sol":BIC_TOKEN_COMPILER_SETTING,
+      "@openzeppelin/contracts/access/Ownable.sol": BIC_TOKEN_COMPILER_SETTING,
+      "@openzeppelin/contracts/math/SafeMath.sol": BIC_TOKEN_COMPILER_SETTING
     },
   },
   networks: {
@@ -93,6 +88,7 @@ const config: HardhatUserConfig = {
         url: "https://arbitrum.llamarpc.com",
         blockNumber: 279380358,
       },
+      
     },
     arbitrumSepolia: {
       url: "https://sepolia-rollup.arbitrum.io/rpc",

@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.7.6;
-import "@uniswap/v3-periphery/contracts/interfaces/external/IWETH9.sol";
+pragma solidity ^0.8.12;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+
+interface IWETH9 is IERC20 {
+    /// @notice Deposit ether to get wrapped ether
+    function deposit() external payable;
+
+    /// @notice Withdraw wrapped ether to get ether
+    function withdraw(uint256) external;
+}
+
 
 contract TestWeth9 is IWETH9, ERC20 {
     constructor() ERC20("Wrapped Ether", "WETH") {}

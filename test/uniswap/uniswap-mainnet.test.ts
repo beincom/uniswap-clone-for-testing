@@ -1,13 +1,12 @@
 import { expect, use } from "chai";
 import { ethers, network } from "hardhat";
-
 import {
   TestWeth9,
-  UniswapV3Factory,
-  NonfungiblePositionManager,
   TestERC20,
-  UniswapV3Pool,
+  IUniswapV3Factory, IUniswapV3Pool
 } from "../../typechain-types";
+
+
 
 import {
   encodeSqrtRatioX96,
@@ -25,7 +24,9 @@ import {
   MintOptions,
 } from "@uniswap/v3-sdk";
 import { CurrencyAmount, Percent, Token } from "@uniswap/sdk-core";
-import { Wallet } from "ethers";
+import NonfungiblePositionManagerArtifact from "@uniswap/v3-periphery/artifacts/contracts/NonfungiblePositionManager.sol/NonfungiblePositionManager.json";
+import { Contract } from "ethers";
+
 
 export const getMinTick = (tickSpacing: number) =>
   Math.ceil(-887272 / tickSpacing) * tickSpacing;
@@ -43,13 +44,16 @@ function sortedTokens(
   return compareToken(a, b) < 0 ? [a, b] : [b, a];
 }
 
+const { } = ethers;
 describe("Uniswap Mainnet", function () {
+
+
   const SWAP_ROUTER_ADDRESS = "0xE592427A0AEce92De3Edee1F18E0157C05861564";
   const NONFUNGIBLE_POSITION_MANAGER_CONTRACT_ADDRESS = "0xC36442b4a4522E871399CD717aBDD847Ab11FE88";
   const UNISWAP_V3_FACTORY_ADDRESS = "0x1F98431c8aD98523631AE4a59f267346ea31F984";
-  let uniswapV3Factory: UniswapV3Factory;
-  let nonfungiblePositionManager: NonfungiblePositionManager;
-  let pool: UniswapV3Pool;
+  let uniswapV3Factory: IUniswapV3Factory;
+  let nonfungiblePositionManager: Contract;
+  let pool: IUniswapV3Pool;
 
   let bicToken: TestERC20;
   let weth9: TestWeth9;
@@ -69,7 +73,6 @@ describe("Uniswap Mainnet", function () {
   const INIT_ETH_AMOUNT = ethers.parseEther("50");
 
   let currentPositionId: string | bigint;
-
 
   async function getTokenTransferApproval(signer: any, tokenAddress: string, spender: string, amount: string) {
 
@@ -181,6 +184,7 @@ describe("Uniswap Mainnet", function () {
       .approve(nonfungiblePositionManager.target, ethers.MaxUint256);
     await approveWETHUserTx.wait();
   };
+
   before(async () => {
     const [deployer] = await ethers.getSigners();
     const BicToken = await ethers.getContractFactory("TestERC20");
@@ -191,13 +195,15 @@ describe("Uniswap Mainnet", function () {
     await weth9.waitForDeployment();
 
     uniswapV3Factory = await ethers.getContractAt(
-      "UniswapV3Factory",
+      "IUniswapV3Factory",
       UNISWAP_V3_FACTORY_ADDRESS,
     );
-    nonfungiblePositionManager = await ethers.getContractAt(
-      "NonfungiblePositionManager",
+    nonfungiblePositionManager = await ethers.getContractAtFromArtifact(
+      NonfungiblePositionManagerArtifact,
       NONFUNGIBLE_POSITION_MANAGER_CONTRACT_ADDRESS,
     );
+    // nonfungiblePositionManager = new Contract(NONFUNGIBLE_POSITION_MANAGER_CONTRACT_ADDRESS, NonfungiblePositionManagerArtifact.abi, deployer);
+    
 
     expect(
       await uniswapV3Factory.feeAmountTickSpacing(FeeAmount.MEDIUM)
@@ -263,7 +269,7 @@ describe("Uniswap Mainnet", function () {
       token1.target,
       feeTiter
     );
-    pool = await ethers.getContractAt("UniswapV3Pool", getPool);
+    pool = await ethers.getContractAt("IUniswapV3Pool", getPool);
     const slot0 = await pool.slot0();
 
     expect(slot0.sqrtPriceX96.toString()).to.be.eq(sqrtPriceX96.toString());
@@ -312,9 +318,7 @@ describe("Uniswap Mainnet", function () {
       .connect(user1)
       .approve(nonfungiblePositionManager.target, ethers.MaxUint256);
 
-    const swapTx = await nonfungiblePositionManager
-      .connect(user1)
-      .multicall([]);
+   
   });
 
   it("Should be ADD LIQUIDITY without charging tax fee", async () => {
