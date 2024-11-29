@@ -17,8 +17,13 @@ import {
   Position,
   RemoveLiquidityOptions,
   CollectOptions,
+  NonfungiblePositionManager as NonfungiblePositionManagerSDK,
+  SwapOptions,
+  SwapRouter,
+  Trade,
+  Route,
 } from "@uniswap/v3-sdk";
-import { CurrencyAmount, Token } from "@uniswap/sdk-core";
+import { CurrencyAmount, Percent, Token } from "@uniswap/sdk-core";
 
 export const getMinTick = (tickSpacing: number) =>
   Math.ceil(-887272 / tickSpacing) * tickSpacing;
@@ -37,12 +42,16 @@ function sortedTokens(
 }
 
 describe("Uniswap Mainnet", function () {
+  const SWAP_ROUTER_ADDRESS = "0xE592427A0AEce92De3Edee1F18E0157C05861564";
   let uniswapV3Factory: UniswapV3Factory;
   let nonfungiblePositionManager: NonfungiblePositionManager;
   let pool: UniswapV3Pool;
 
   let bicToken: TestERC20;
   let weth9: TestWeth9;
+
+  let token0: TestWeth9;
+  let token1: TestWeth9;
 
   let MAX_BPS = 100_00n;
 
@@ -55,6 +64,8 @@ describe("Uniswap Mainnet", function () {
   const INIT_BIC_AMOUNT = ethers.parseEther("100000");
   const INIT_ETH_AMOUNT = ethers.parseEther("50");
 
+  let currentPositionId: string | bigint;
+
 
   const constructPool = async () => {
     const [token0, token1] = sortedTokens(
@@ -66,13 +77,27 @@ describe("Uniswap Mainnet", function () {
       pool.slot0(),
     ]);
 
+    const minTickData = await pool.ticks(minTick);
+    const maxTickData = await pool.ticks(maxTick);
     const configuredPool = new Pool(
-      new Token(network.config.chainId || 0, token0.target, 18, "BIC", "BIC"),
-      new Token(network.config.chainId || 0, token1.target, 18, "WETH", "WETH"),
+      new Token(network.config.chainId || 0, token0.target, 18, "", ""),
+      new Token(network.config.chainId || 0, token1.target, 18, "", ""),
       feeTiter,
       slot0.sqrtPriceX96.toString(),
       liquidity.toString(),
-      Number(slot0.tick)
+      Number(slot0.tick),
+      [
+        {
+          index: minTick,
+          liquidityGross: minTickData.liquidityGross.toString(),
+          liquidityNet: minTickData.liquidityNet.toString(),
+        },
+        {
+          index: maxTick,
+          liquidityGross: maxTickData.liquidityGross.toString(),
+          liquidityNet: maxTickData.liquidityNet.toString(),
+        },
+      ]
     );
     return configuredPool;
   };
@@ -89,6 +114,10 @@ describe("Uniswap Mainnet", function () {
     });
     return position;
   }
+
+  const constructToken = async () => {
+
+   }
   
   const prepare = async () => {
     const AMOUNT_WETH = ethers.parseEther("1000");
@@ -167,7 +196,7 @@ describe("Uniswap Mainnet", function () {
       nonfungiblePositionManager: nonfungiblePositionManager.target,
     });
 
-    const [token0, token1] = sortedTokens(
+    let [token0, token1] = sortedTokens(
       bicToken as { target: string },
       weth9 as { target: string }
     );
@@ -178,6 +207,7 @@ describe("Uniswap Mainnet", function () {
     const deadline = Math.floor(Date.now() / 1000) + 60 * 20;
 
     const isBicToken0 = token0.target === bicToken.target;
+    
     const amount0Desired = isBicToken0 ? INIT_ETH_AMOUNT : INIT_BIC_AMOUNT;
     const amount1Desired = isBicToken0 ? INIT_BIC_AMOUNT : INIT_ETH_AMOUNT;
 
@@ -321,46 +351,67 @@ describe("Uniswap Mainnet", function () {
         }
       })
       .filter((log) => log !== null);
-    const mintEvent = parseLog?.find((log) => log?.name === "Mint");
-    mintEvent?.args;
     // emit Mint(msg.sender, recipient, tickLower, tickUpper, amount, amount0, amount1);
+    const mintEvent = parseLog?.find((log) => log?.name === "Mint");
+    
     const amount0 = mintEvent?.args?.amount0;
     const amount1 = mintEvent?.args?.amount1;
     // Except the liquidity
     expect(amount0.toString()).to.be.eq(mintAmount0Expect.toString());
     expect(amount1.toString()).to.be.eq(mintAmount1Expect.toString());
-  });
 
+
+    const increaseLiquidityEvent = receipt?.logs?.find((log) => log.topics[0] === nonfungiblePositionManager.interface.getEvent("IncreaseLiquidity").topicHash);
+    const increaseEvent = nonfungiblePositionManager.interface.parseLog(increaseLiquidityEvent!);
+    currentPositionId = increaseEvent?.args?.tokenId;
+  });
 
   it("Should be REMOVE LIQUIDITY without charging tax fee", async () => {
     const [deployer, user1] = await ethers.getSigners();
-    
-    const collectOptions: Omit<CollectOptions, 'tokenId'> = {
-      expectedCurrencyOwed0: CurrencyAmount.fromRawAmount(
-        token0,
-        0
-      ),
-      expectedCurrencyOwed1: CurrencyAmount.fromRawAmount(
-        token1,
-        0
-      ),
-      recipient: user1.address,
-    }
-    
-    const removeLiquidityOptions: RemoveLiquidityOptions = {
-      deadline: Math.floor(Date.now() / 1000) + 60 * 20,
-      slippageTolerance: new Percent(50, 10_000),
-      tokenId: positionId,
-      // percentage of liquidity to remove
-      liquidityPercentage: new Percent(0.5),
-      collectOptions,
-    }
   });
 
   it("Should be COLLECT FEE LIQUIDITY without charging tax fee", async () => {
     const [deployer, user1] = await ethers.getSigners();
+  });
 
+  it("Should be SELL with charging tax fee", async () => {
+    const [deployer, user1] = await ethers.getSigners();
+    console.log("🚀 ~ it ~ deployer:", network.config.chainId)
+    const pool = await constructPool();
+    const options: SwapOptions = {
+      slippageTolerance: new Percent(50, 10_000), // 50 bips, or 0.50%
+      deadline: Math.floor(Date.now() / 1000) + 60 * 20, // 20 minutes from the current Unix time
+      recipient: user1.address,
+    }
+    const bicTokenSdk = new Token(network.config.chainId || 0, bicToken.target.toString(), 18, "", "")
+    const wethTokenSdk = new Token(network.config.chainId || 0, weth9.target.toString(), 18, "", "")
 
+    const swapRoute = new Route(
+      [pool],
+      bicTokenSdk,
+      wethTokenSdk
+    );
 
+    const approveTx = await bicToken.connect(user1).approve(SWAP_ROUTER_ADDRESS, ethers.MaxUint256);
+    await approveTx.wait();
+
+    const sellAmount = ethers.parseEther("1000");
+    const amountInCurrencyAmount = CurrencyAmount.fromRawAmount(
+      bicTokenSdk,
+      sellAmount.toString(),
+    );
+    const uncheckedTrade = await Trade.exactIn(swapRoute, amountInCurrencyAmount)
+    const methodParameters = SwapRouter.swapCallParameters([uncheckedTrade], options);
+    const tx = {
+      data: methodParameters.calldata,
+      to: SWAP_ROUTER_ADDRESS,
+      value: methodParameters.value,
+      from: user1.address,
+    }
+    
+    const swapTx = await user1.sendTransaction(tx);
+    const recept = await swapTx.wait();
+
+    
   });
 });
