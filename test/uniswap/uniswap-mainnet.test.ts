@@ -22,8 +22,10 @@ import {
   SwapRouter,
   Trade,
   Route,
+  MintOptions,
 } from "@uniswap/v3-sdk";
 import { CurrencyAmount, Percent, Token } from "@uniswap/sdk-core";
+import { Wallet } from "ethers";
 
 export const getMinTick = (tickSpacing: number) =>
   Math.ceil(-887272 / tickSpacing) * tickSpacing;
@@ -43,6 +45,8 @@ function sortedTokens(
 
 describe("Uniswap Mainnet", function () {
   const SWAP_ROUTER_ADDRESS = "0xE592427A0AEce92De3Edee1F18E0157C05861564";
+  const NONFUNGIBLE_POSITION_MANAGER_CONTRACT_ADDRESS = "0xC36442b4a4522E871399CD717aBDD847Ab11FE88";
+  const UNISWAP_V3_FACTORY_ADDRESS = "0x1F98431c8aD98523631AE4a59f267346ea31F984";
   let uniswapV3Factory: UniswapV3Factory;
   let nonfungiblePositionManager: NonfungiblePositionManager;
   let pool: UniswapV3Pool;
@@ -66,6 +70,18 @@ describe("Uniswap Mainnet", function () {
 
   let currentPositionId: string | bigint;
 
+
+  async function getTokenTransferApproval(signer: any, tokenAddress: string, spender: string, amount: string) {
+
+    const tokenContract = await ethers.getContractAt("TestERC20", tokenAddress)
+
+    const tx1 = await tokenContract.connect(signer).approve(
+      spender,
+      amount
+    );
+    const tx1Receipt = await tx1.wait();
+    return tx1Receipt;
+  }
 
   const constructPool = async () => {
     const [token0, token1] = sortedTokens(
@@ -102,7 +118,7 @@ describe("Uniswap Mainnet", function () {
     return configuredPool;
   };
 
-  const constructPosition = async (amount0: string, amount1: string) => { 
+  const constructPosition = async (amount0: string, amount1: string) => {
     const configuredPool = await constructPool();
     const position = Position.fromAmounts({
       pool: configuredPool,
@@ -117,8 +133,8 @@ describe("Uniswap Mainnet", function () {
 
   const constructToken = async () => {
 
-   }
-  
+  }
+
   const prepare = async () => {
     const AMOUNT_WETH = ethers.parseEther("1000");
     const AMOUNT_BIC = ethers.parseEther("100000");
@@ -176,11 +192,11 @@ describe("Uniswap Mainnet", function () {
 
     uniswapV3Factory = await ethers.getContractAt(
       "UniswapV3Factory",
-      "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+      UNISWAP_V3_FACTORY_ADDRESS,
     );
     nonfungiblePositionManager = await ethers.getContractAt(
       "NonfungiblePositionManager",
-      "0xC36442b4a4522E871399CD717aBDD847Ab11FE88"
+      NONFUNGIBLE_POSITION_MANAGER_CONTRACT_ADDRESS,
     );
 
     expect(
@@ -207,7 +223,7 @@ describe("Uniswap Mainnet", function () {
     const deadline = Math.floor(Date.now() / 1000) + 60 * 20;
 
     const isBicToken0 = token0.target === bicToken.target;
-    
+
     const amount0Desired = isBicToken0 ? INIT_ETH_AMOUNT : INIT_BIC_AMOUNT;
     const amount1Desired = isBicToken0 ? INIT_BIC_AMOUNT : INIT_ETH_AMOUNT;
 
@@ -316,30 +332,32 @@ describe("Uniswap Mainnet", function () {
     const amount1Desired = isBicToken0
       ? ethers.parseEther("10000")
       : ethers.parseEther("1");
+    await getTokenTransferApproval(user1, token0.target.toString(), NONFUNGIBLE_POSITION_MANAGER_CONTRACT_ADDRESS, amount0Desired.toString());
+    await getTokenTransferApproval(user1, token1.target.toString(), NONFUNGIBLE_POSITION_MANAGER_CONTRACT_ADDRESS, amount0Desired.toString());
+
 
     const position = await constructPosition(amount0Desired.toString(), amount1Desired.toString());
     const mintAmount0Expect = position.mintAmounts.amount0;
     const mintAmount1Expect = position.mintAmounts.amount1;
 
-    const addLiquidityTx = await nonfungiblePositionManager
-      .connect(user1)
-      .multicall([
-        nonfungiblePositionManager.interface.encodeFunctionData("mint", [
-          {
-            token0: token0.target.toString(),
-            token1: token1.target.toString(),
-            fee: feeTiter,
-            tickLower: getMinTick(spacing),
-            tickUpper: getMaxTick(spacing),
-            amount0Desired: amount0Desired,
-            amount1Desired: amount1Desired,
-            amount0Min: 0,
-            amount1Min: 0,
-            recipient: deployer.address,
-            deadline: deadline,
-          },
-        ]),
-      ]);
+    const mintOptions: MintOptions = {
+      recipient: user1.address,
+      deadline: Math.floor(Date.now() / 1000) + 60 * 20,
+      slippageTolerance: new Percent(50, 10_000),
+    }
+
+    // get calldata for minting a position
+    const { calldata, value } = NonfungiblePositionManagerSDK.addCallParameters(
+      position,
+      mintOptions
+    )
+
+    const addLiquidityTx = await user1.sendTransaction({
+      data: calldata,
+      to: NONFUNGIBLE_POSITION_MANAGER_CONTRACT_ADDRESS,
+      value: value,
+      from: user1.address,
+    })
 
     const receipt = await addLiquidityTx.wait();
     const parseLog = receipt?.logs
@@ -353,7 +371,7 @@ describe("Uniswap Mainnet", function () {
       .filter((log) => log !== null);
     // emit Mint(msg.sender, recipient, tickLower, tickUpper, amount, amount0, amount1);
     const mintEvent = parseLog?.find((log) => log?.name === "Mint");
-    
+
     const amount0 = mintEvent?.args?.amount0;
     const amount1 = mintEvent?.args?.amount1;
     // Except the liquidity
@@ -376,7 +394,6 @@ describe("Uniswap Mainnet", function () {
 
   it("Should be SELL with charging tax fee", async () => {
     const [deployer, user1] = await ethers.getSigners();
-    console.log("🚀 ~ it ~ deployer:", network.config.chainId)
     const pool = await constructPool();
     const options: SwapOptions = {
       slippageTolerance: new Percent(50, 10_000), // 50 bips, or 0.50%
@@ -392,8 +409,7 @@ describe("Uniswap Mainnet", function () {
       wethTokenSdk
     );
 
-    const approveTx = await bicToken.connect(user1).approve(SWAP_ROUTER_ADDRESS, ethers.MaxUint256);
-    await approveTx.wait();
+    await getTokenTransferApproval(user1, bicToken.target.toString(), SWAP_ROUTER_ADDRESS, ethers.MaxUint256.toString());
 
     const sellAmount = ethers.parseEther("1000");
     const amountInCurrencyAmount = CurrencyAmount.fromRawAmount(
@@ -408,10 +424,11 @@ describe("Uniswap Mainnet", function () {
       value: methodParameters.value,
       from: user1.address,
     }
-    
+
     const swapTx = await user1.sendTransaction(tx);
     const recept = await swapTx.wait();
 
-    
+    // TODO: Expect deduct tax fee
+
   });
 });
